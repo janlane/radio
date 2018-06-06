@@ -7,24 +7,27 @@
 
 
 class audiogram {
-private:
-    size_t  _size;
-
 public:
+    static const int HEADER_SIZE = 16;
+
     uint64_t session_id;
     uint64_t first_byte_num;
-    std::vector<char> audio_data;
+    std::vector<uint8_t> audio_data;
 
     audiogram() = default;
 
-    audiogram(uint64_t session_id, uint64_t first_byte_num, std::vector<char> v) :
+    audiogram(uint64_t session_id, uint64_t first_byte_num) :
+            session_id(reverse_bytes(session_id)),
+            first_byte_num(reverse_bytes(first_byte_num)) {};
+
+    audiogram(uint64_t session_id, uint64_t first_byte_num,
+              std::vector<uint8_t > &v) :
             session_id(reverse_bytes(session_id)),
             first_byte_num(reverse_bytes(first_byte_num)),
-            audio_data(std::move(v)),
-            _size(v.size() + sizeof(session_id) + sizeof(first_byte_num)) {};
+            audio_data(v) {};
 
     size_t size() {
-        return _size;
+        return audio_data.size() + sizeof(session_id) + sizeof(first_byte_num);
     }
 
     uint64_t reverse_bytes(const uint64_t in) {

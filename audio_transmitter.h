@@ -3,12 +3,13 @@
 
 #include <iostream>
 #include <chrono>
+#include <cerrno>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include "transmitter.h"
 #include "const.h"
 
-virtual class audio_transmitter : protected transmitter {
+class audio_transmitter : public transmitter {
 protected:
     static const in_addr_t MIN_MCAST_ADDR_VAL = 0xE0000001; // 224.0.0.1
     static const in_addr_t MAX_MCAST_ADDR_VAL = 0xEFFFFFFF; // 239.255.255.255
@@ -21,6 +22,8 @@ protected:
     size_t fsize = 128 * 1000;
     std::chrono::milliseconds rtime = std::chrono::milliseconds(250);
     std::string name = "Nienazwany Nadajnik";
+    transmitter audio_tr;
+    transmitter replies_tr;
 
     virtual int init(int argc, char *argv[]) {
         namespace po = boost::program_options;
@@ -87,8 +90,11 @@ protected:
         return prepare_to_send();
     }
 
-    int send_audiogram(audiogram &a) {
-        if (sendto(sock, (void*)&a, a.size(), 0,
+    int send_audiogram(std::vector<uint8_t> &a) {
+//        for (int i = 0; i < psize + 16; ++i) {
+//            printf("%x", a[i] & 0xff);
+//        } printf("\n");
+        if (sendto(audio_tr.sock, (void *)a.data(), psize, 0,
                    (struct sockaddr *)&mcast_addr, sizeof(mcast_addr)) == -1) {
             std::cerr << "Error: audiogram sendto, errno = " << errno << "\n";
             return 1;
@@ -100,13 +106,13 @@ protected:
     int send_reply(sockaddr_in &addr) {
         // BOREWICZ_HERE [MCAST_ADDR] [DATA_PORT] [nazwa stacji]
         char msg[MAX_CTRL_MSG_LEN];
-        int msg_size = sprintf(msg, "BOREWICZ_HERE %s %d %s\n",
-                inet_ntoa(mcast_addr.sin_addr),  htons(data_port), name);
+        int msg_size = sprintf(msg, "%s %s %d %s\n", REPLY_MSG,
+                inet_ntoa(mcast_addr.sin_addr), htons(data_port), name.c_str());
 
         if (msg_size < 0)
             return 1;
 
-        if (sendto(sock, (void*)&msg, (size_t)msg_size, 0,
+        if (sendto(replies_tr.sock, (void*)&msg, (size_t)msg_size, 0,
                    (struct sockaddr *)&addr, sizeof(addr)) == -1) {
             std::cerr << "Error: reply sendto, errno = " << errno << "\n";
             return 1;
@@ -117,6 +123,9 @@ protected:
 
 private:
     int prepare_to_send() override {
+        audio_tr.prepare_to_send();
+        replies_tr.prepare_to_send();
+
         mcast_addr.sin_family = AF_INET;
         mcast_addr.sin_port = data_port;
 

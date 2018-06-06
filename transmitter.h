@@ -6,10 +6,16 @@
 #include <iostream>
 #include <netinet/in.h>
 
-virtual class transmitter {
-protected:
+class transmitter {
+private:
     static const int TTL = 4; // TODO find the best
+
+public:
     int sock = -1;
+
+    virtual ~transmitter() {
+        close(sock);
+    }
 
     virtual int prepare_to_send() {
         int optval, err = 0;
@@ -36,6 +42,7 @@ protected:
             }
         } while (err);
     }
+
 };
 
 

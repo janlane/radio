@@ -24,20 +24,18 @@
 
 class radio_transmitter : protected audio_transmitter {
 private:
-    /* first chars of LOOKUP_MSG and REXMIT_MSG shall remain different */
-    static const char *LOOKUP_MSG = "ZERO_SEVEN_COME_IN";
-    static const char *REXMIT_MSG = "LOUDER_PLEASE ";
-    static const char *REPLY_MSG = "BOREWICZ_HERE ";
-
     boost::circular_buffer<audiogram> data_q;
     std::unique_ptr<std::set<uint64_t>> retransmit_nums_ptr;
     std::queue<sockaddr_in> replies_q;
     std::mutex retransmit_nums_mut;
-    std::mutex bcast_mut;
     std::mutex replies_mut;
     int rcv_sock = -1;
 
 public:
+    ~radio_transmitter() {
+        close(rcv_sock);
+    }
+
     int init(int argc, char *argv[]) override {
         data_q = boost::circular_buffer<audiogram>(fsize / psize);
         retransmit_nums_ptr = std::make_unique<std::set<uint64_t>>();
@@ -45,20 +43,15 @@ public:
     }
 
     void work() {
-        std::thread t1(listen_for_incoming());
-        std::thread t2(transmit_and_retransmit());
-        std::thread t3(send_replies());
+        std::thread t1(&radio_transmitter::listen_for_incoming, this);
+        std::thread t2(&radio_transmitter::transmit_and_retransmit, this);
+        std::thread t3(&radio_transmitter::send_replies, this);
         t1.join();
         t2.join();
         t3.join();
     }
 
 private:
-    ~radio_transmitter() {
-        close(sock);
-        close(rcv_sock);
-    }
-
     void prepare_to_receive() {
         sockaddr_in server_address;
         int err = 0;
@@ -89,7 +82,7 @@ private:
         for (;;) {
             struct sockaddr_in rcv_addr;
             socklen_t rcv_addr_len;
-            ssize_t rcv_len = recvfrom(sock, (void *) &buffer, sizeof buffer, 0,
+            ssize_t rcv_len = recvfrom(rcv_sock, (void *) &buffer, sizeof buffer, 0,
                     (struct sockaddr *) &rcv_addr, &rcv_addr_len);
 
             if (rcv_len < 0) {
@@ -99,9 +92,9 @@ private:
                 buffer[rcv_len] = '\0';
 
                 if (buffer[0] == LOOKUP_MSG[0]) {
-                    if (!parse_lookup(buffer, (size_t)(rcv_len))) {
+                    if (!parse_lookup(buffer, (size_t)rcv_len)) {
                         replies_mut.lock();
-                        replies_q.push(rcv_addr);
+                        replies_q.push(rcv_addr); // TODO zdecydować czy od razu send?
                         replies_mut.unlock();
                     }
                 } else if (buffer[0] == REXMIT_MSG[0]) {
@@ -120,60 +113,68 @@ private:
     void transmit_and_retransmit() {
         namespace ch = std::chrono;
         uint64_t packet_id = 0, session_id = (uint64_t)time(nullptr);
-        std::vector<char> buf(psize);
-        char test[psize];
+        std::ios_base::sync_with_stdio(false);
 
-        while (!std::cin.eof) {
+        while (!std::cin.eof()) {
             /* transmit */
             auto start = std::chrono::system_clock::now();
             do {
-                std::cin.read(buf.data(), psize);
-                if (std::cin.failbit)
+                audiogram a;
+                std::vector<uint8_t> ag(psize);
+
+                std::cin.read((char *)ag.data() + audiogram::HEADER_SIZE, psize - audiogram::HEADER_SIZE);
+                if (std::cin.fail())
                     return;
+                ((uint64_t *)ag.data())[0] = session_id;
+                ((uint64_t *)ag.data())[0] = packet_id;
+                //a.audio_data = std::vector<uint8_t>((uint8_t *)ag + audiogram::HEADER_SIZE, (uint8_t *)psize - audiogram::HEADER_SIZE);
+                //audiogram a = audiogram(session_id, packet_id, buf);
 
-                audiogram a = audiogram(session_id, packet_id, buf);
-                data_q.push_back(a);
-
-                if (send_audiogram(a)) {
+                if (send_audiogram(ag)) {
                     break; // TODO nie break a handler albo nic
                 }
 
+                data_q.push_back(a);
                 packet_id += psize;
-            } while (ch::duration<ch::milliseconds>(
-                    ch::system_clock::now() - start) < rtime && !std::cin.eof());
+            } while (!std::cin.eof()); // wrócić warunek na time
 
             /* retransmit */
-            retransmit_nums_mut.lock();
-            std::unique_ptr<std::set<uint64_t>> nums_ptr =
-                    std::move(retransmit_nums_ptr);
-            retransmit_nums_ptr = std::make_unique<std::set<uint64_t>>();
-            retransmit_nums_mut.unlock();
-
-            int q = 0;
-            for (uint64_t num : *nums_ptr) {
-                while (q < data_q.size() && num < data_q[q].first_byte_num)
-                    ++q;
-                if (q == data_q.size())
-                    break;
-
-                if (num == data_q[q].first_byte_num) {
-                    send_audiogram(data_q[q]);
-                }
-                ++q;
-            }
+//            retransmit_nums_mut.lock();
+//            std::unique_ptr<std::set<uint64_t>> nums_ptr =
+//                    std::move(retransmit_nums_ptr);
+//            retransmit_nums_ptr = std::make_unique<std::set<uint64_t>>();
+//            retransmit_nums_mut.unlock();
+//
+//            int q = 0;
+//            for (uint64_t num : *nums_ptr) {
+//                while (q < data_q.size() && num < data_q[q].first_byte_num)
+//                    ++q;
+//                if (q == data_q.size())
+//                    break;
+//
+//                if (num == data_q[q].first_byte_num) {
+//                    send_audiogram(data_q[q]);
+//                }
+//                ++q;
+//            }
         }
     }
 
     void send_replies() {
         for(;;) {
+            int not_empty = 0;
+            sockaddr_in addr;
             replies_mut.lock();
-            sockaddr_in addr = replies_q.back();
-            replies_q.pop();
+            if (!replies_q.empty()) {
+                addr = replies_q.back();
+                replies_q.pop();
+                not_empty = 1;
+            }
             replies_mut.unlock();
 
-            bcast_mut.lock();
-            send_reply(addr);
-            bcast_mut.unlock();
+            if (not_empty) {
+                send_reply(addr);
+            }
         }
     }
 

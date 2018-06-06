@@ -12,11 +12,10 @@
 #include "receiver.h"
 
 
-class radio_receiver : protected receiver {
+class radio_receiver : private receiver {
 private:
-    struct sockaddr_in discover_addr = {0, 0, (uint32_t)-2, 0};
+    struct sockaddr_in discover_addr = {0, 0, (uint32_t)-1, 0};
     struct sockaddr_in mcast_addr;
-    int sock = -1;
     in_port_t ctrl_port = (in_port_t)35826;
     in_port_t ui_port = (in_port_t)15826;
     size_t bsize = 512;
@@ -76,17 +75,23 @@ public:
     }
 
     int listen() {
-        for(int i = 0; i < 3; ++i) {
-            char buffer[65536];
+        std::ios_base::sync_with_stdio(false);
+        for(int i = 0; i < 8000000; ++i) {
+            uint8_t buffer[65536];
             // zmienić na rcvfrom?
-            ssize_t rcv_len = read(sock, (void *) &buffer, sizeof buffer);
+            ssize_t rcv_len = read(sock, (void *)buffer, sizeof(buffer));
             if (rcv_len < 0) {
-                std::cerr << "Error: bind\n";
+                std::cerr << "Error: receiver read, errno = " << errno << "\n";
                 break;
             } else {
-                std::vector<char> data(buffer + 16, buffer + rcv_len - 16);
-                audiogram a((uint64_t) buffer[0], (uint64_t) buffer[8], std::move(data));
-                printf("read %zd bytes: %.*s\n", rcv_len, (int) rcv_len, buffer);
+                uint64_t session_id = (uint64_t) buffer;
+                //printf("read %zd bytes: %.*s\n", rcv_len, (int) rcv_len, buffer + audiogram::HEADER_SIZE);
+                uint64_t id = (uint64_t)buffer + audiogram::HEADER_SIZE;
+                std::cerr << "read " << rcv_len << " bytes\n";
+                std::cout.write((char *)buffer + 16, rcv_len - 16);
+//                for (int j = 0; j < 528; ++j) {
+//                    printf("%x", buffer[j] & 0xff);
+//                } printf("\n");
             }
         }
         return 0;

@@ -6,6 +6,11 @@
 #include <arpa/inet.h>
 
 class receiver {
+public:
+    virtual ~receiver() {
+        close(sock);
+    }
+
 protected:
     int sock = -1;
 
