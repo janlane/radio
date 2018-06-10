@@ -7,32 +7,54 @@
 
 
 class audiogram {
+private:
+    std::vector<uint8_t> packet;
+
 public:
     static const int HEADER_SIZE = 16;
 
-    uint64_t session_id;
-    uint64_t first_byte_num;
-    std::vector<uint8_t> audio_data;
-
-    audiogram() = default;
-
-    audiogram(uint64_t session_id, uint64_t first_byte_num) :
-            session_id(reverse_bytes(session_id)),
-            first_byte_num(reverse_bytes(first_byte_num)) {};
-
-    audiogram(uint64_t session_id, uint64_t first_byte_num,
-              std::vector<uint8_t > &v) :
-            session_id(reverse_bytes(session_id)),
-            first_byte_num(reverse_bytes(first_byte_num)),
-            audio_data(v) {};
-
-    size_t size() {
-        return audio_data.size() + sizeof(session_id) + sizeof(first_byte_num);
+    void set_size(size_t size) {
+        packet = std::vector<uint8_t>(size);
     }
 
-    uint64_t reverse_bytes(const uint64_t in) {
-        unsigned char out[8] = {in>>56, in>>48, in>>40, in>>32, in>>24, in>>16, in>>8, in};
-        return *(uint64_t *)out;
+    uint64_t get_session_id() {
+        return htonll(*(uint64_t *)packet.data());
+    }
+
+    uint64_t set_session_id(uint64_t id) {
+        *(uint64_t *)packet.data() = id;
+    }
+
+    uint64_t get_packet_id() {
+        return ntohll(*(uint64_t *)(packet.data() + sizeof(uint64_t)));
+    }
+
+    uint64_t set_packet_id(uint64_t id) {
+        *(uint64_t *)(packet.data() + sizeof(uint64_t)) = id;
+    }
+
+    uint8_t *get_audio_data() {
+        return packet.data() + HEADER_SIZE;
+    }
+
+    uint8_t *get_packet_data() {
+        return packet.data();
+    }
+
+    size_t size() {
+        return packet.size();
+    }
+
+    bool empty() {
+        return packet.empty();
+    }
+
+    static inline uint64_t htonll(const uint64_t x) {
+        return (1 == htonl(1)) ? x : ((uint64_t)htonl((uint32_t)(x & 0xFFFFFFFF)) << 32u) | htonl((uint32_t)(x >> 32u));
+    }
+
+    static inline uint64_t ntohll(const uint64_t x) {
+        return (1 == ntohl(1)) ? x : ((uint64_t)ntohl((uint32_t)(x & 0xFFFFFFFF)) << 32u) | ntohl((uint32_t)(x >> 32u));
     }
 };
 

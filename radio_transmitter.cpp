@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <chrono>
 #include <thread>
+#include <atomic>
 #include <mutex>
 #include <memory>
 #include <limits>
@@ -29,6 +30,8 @@ private:
     std::queue<sockaddr_in> replies_q;
     std::mutex retransmit_nums_mut;
     std::mutex replies_mut;
+    std::atomic_flag keep_listening = ATOMIC_FLAG_INIT;
+    std::atomic_flag stop_replying = ATOMIC_FLAG_INIT;
     int rcv_sock = -1;
 
 public:
@@ -40,38 +43,100 @@ public:
         data_q = boost::circular_buffer<audiogram>(fsize / psize);
         retransmit_nums_ptr = std::make_unique<std::set<uint64_t>>();
         audio_transmitter::init(argc, argv);
+//        std::ios_base::sync_with_stdio(false);
+//        std::cin.tie(nullptr);
+//        std::cerr.tie(nullptr);
     }
 
     void work() {
+        keep_listening.test_and_set();
         std::thread t1(&radio_transmitter::listen_for_incoming, this);
-        std::thread t2(&radio_transmitter::transmit_and_retransmit, this);
-        std::thread t3(&radio_transmitter::send_replies, this);
+        stop_replying.test_and_set();
+        std::thread t2(&radio_transmitter::send_replies, this);
+
+        transmit_and_retransmit();
+        keep_listening.clear();
+        stop_replying.clear();
+
         t1.join();
         t2.join();
-        t3.join();
     }
 
 private:
     void prepare_to_receive() {
+        int err;
         sockaddr_in server_address;
-        int err = 0;
-        rcv_sock = socket(AF_INET, SOCK_DGRAM, 0); // creating IPv4 UDP socket
-        if (rcv_sock < 0) {
-            std::cerr << "Error: ctrl_rcv socket, errno = " << errno << "\n";
-            err = 1;
-        }
-        // after socket() call; we should close(sock) on any execution path;
-        // since all execution paths exit immediately, sock would be closed when program terminates
 
-        server_address.sin_family = AF_INET; // IPv4
-        server_address.sin_addr.s_addr = htonl(INADDR_ANY); // listening on all interfaces
-        server_address.sin_port = htons(ctrl_port); // default port for receiving is PORT_NUM
+        do {
+            err = 0;
+            close(rcv_sock);
+            rcv_sock = socket(AF_INET, SOCK_DGRAM, 0); // creating IPv4 UDP socket
+            if (rcv_sock < 0) {
+                std::cerr << "Error: ctrl_rcv socket, errno = " << errno << "\n";
+                err = 1;
+            }
 
-        // bind the socket to a concrete address
-        if (bind(rcv_sock, (struct sockaddr *) &server_address,
-                 (socklen_t) sizeof(server_address)) < 0) {
-            std::cerr << "Error: ctrl_rcv bind, errno = " << errno << "\n";
-            err = 1;
+            int optval = 1;
+            if (setsockopt(rcv_sock, SOL_SOCKET, SO_BROADCAST, (void *) &optval, sizeof optval) < 0) {
+                std::cerr << "Error: setsockopt broadcast\n";
+                err = 1;
+            }
+
+            server_address.sin_family = AF_INET; // IPv4
+            server_address.sin_addr.s_addr = htonl(INADDR_ANY); // listening on all interfaces
+            server_address.sin_port = ctrl_port; // default port for receiving is PORT_NUM
+
+            // bind the socket to a concrete address
+            if (bind(rcv_sock, (struct sockaddr *) &server_address,
+                     (socklen_t) sizeof(server_address)) < 0) {
+                std::cerr << "Error: ctrl_rcv bind, errno = " << errno << "\n";
+                err = 1;
+            }
+        } while (err);
+    }
+
+    void transmit_and_retransmit() {
+        namespace ch = std::chrono;
+        uint64_t packet_id = 0, session_id = (uint64_t)time(nullptr);
+
+        std::cerr << "session " << session_id << " sent\n";
+        while (!std::cin.eof()) {
+            /* transmit */
+            auto start = std::chrono::system_clock::now();
+            do {
+                audiogram a;
+                a.set_size(psize);
+                a.set_session_id(audiogram::htonll(session_id));
+                a.set_packet_id(audiogram::htonll(packet_id));
+                std::cin.read((char *)a.get_audio_data(), psize - audiogram::HEADER_SIZE);
+                if (std::cin.fail())
+                    return;
+
+                send_audiogram(a);
+
+                data_q.push_back(std::move(a));
+                packet_id += psize;
+            } while (/*ch::system_clock::now() - start < rtime && */!std::cin.eof());
+
+            /* retransmit */
+            retransmit_nums_mut.lock();
+            std::unique_ptr<std::set<uint64_t>> nums_ptr =
+                    std::move(retransmit_nums_ptr);
+            retransmit_nums_ptr = std::make_unique<std::set<uint64_t>>();
+            retransmit_nums_mut.unlock();
+
+            int q = 0;
+            for (uint64_t num : *nums_ptr) {
+                while (q < data_q.size() && num < data_q[q].get_packet_id())
+                    ++q;
+                if (q == data_q.size())
+                    break;
+
+                if (num == data_q[q].get_packet_id()) {
+                    send_audiogram(data_q[q]);
+                }
+                ++q;
+            }
         }
     }
 
@@ -79,22 +144,23 @@ private:
         prepare_to_receive();
         char buffer[MAX_UDP_MSG_LEN];
 
-        for (;;) {
+        while (keep_listening.test_and_set()) {
             struct sockaddr_in rcv_addr;
-            socklen_t rcv_addr_len;
-            ssize_t rcv_len = recvfrom(rcv_sock, (void *) &buffer, sizeof buffer, 0,
-                    (struct sockaddr *) &rcv_addr, &rcv_addr_len);
+            socklen_t rcv_addr_len = (socklen_t)sizeof(rcv_addr);
+            ssize_t rcv_len = recvfrom(rcv_sock, (void *)&buffer, sizeof(buffer),
+                    0, (struct sockaddr *)&rcv_addr, &rcv_addr_len);
 
             if (rcv_len < 0) {
                 std::cerr << "Error: rcv_ctrl rcvfrom\n";
             } else {
-                printf("read %zd bytes: %.*s\n", rcv_len, (int) rcv_len, buffer);
+                //printf("read %zd bytes: %.*s\n", rcv_len, (int) rcv_len, buffer);
                 buffer[rcv_len] = '\0';
 
                 if (buffer[0] == LOOKUP_MSG[0]) {
                     if (!parse_lookup(buffer, (size_t)rcv_len)) {
                         replies_mut.lock();
                         replies_q.push(rcv_addr); // TODO zdecydować czy od razu send?
+                        std::cerr << "reply pushed with " << inet_ntoa(rcv_addr.sin_addr) << "\n";
                         replies_mut.unlock();
                     }
                 } else if (buffer[0] == REXMIT_MSG[0]) {
@@ -110,58 +176,8 @@ private:
         }
     }
 
-    void transmit_and_retransmit() {
-        namespace ch = std::chrono;
-        uint64_t packet_id = 0, session_id = (uint64_t)time(nullptr);
-        std::ios_base::sync_with_stdio(false);
-
-        while (!std::cin.eof()) {
-            /* transmit */
-            auto start = std::chrono::system_clock::now();
-            do {
-                audiogram a;
-                std::vector<uint8_t> ag(psize);
-
-                std::cin.read((char *)ag.data() + audiogram::HEADER_SIZE, psize - audiogram::HEADER_SIZE);
-                if (std::cin.fail())
-                    return;
-                ((uint64_t *)ag.data())[0] = session_id;
-                ((uint64_t *)ag.data())[0] = packet_id;
-                //a.audio_data = std::vector<uint8_t>((uint8_t *)ag + audiogram::HEADER_SIZE, (uint8_t *)psize - audiogram::HEADER_SIZE);
-                //audiogram a = audiogram(session_id, packet_id, buf);
-
-                if (send_audiogram(ag)) {
-                    break; // TODO nie break a handler albo nic
-                }
-
-                data_q.push_back(a);
-                packet_id += psize;
-            } while (!std::cin.eof()); // wrócić warunek na time
-
-            /* retransmit */
-//            retransmit_nums_mut.lock();
-//            std::unique_ptr<std::set<uint64_t>> nums_ptr =
-//                    std::move(retransmit_nums_ptr);
-//            retransmit_nums_ptr = std::make_unique<std::set<uint64_t>>();
-//            retransmit_nums_mut.unlock();
-//
-//            int q = 0;
-//            for (uint64_t num : *nums_ptr) {
-//                while (q < data_q.size() && num < data_q[q].first_byte_num)
-//                    ++q;
-//                if (q == data_q.size())
-//                    break;
-//
-//                if (num == data_q[q].first_byte_num) {
-//                    send_audiogram(data_q[q]);
-//                }
-//                ++q;
-//            }
-        }
-    }
-
     void send_replies() {
-        for(;;) {
+        while (stop_replying.test_and_set()) {
             int not_empty = 0;
             sockaddr_in addr;
             replies_mut.lock();
@@ -195,9 +211,9 @@ private:
         while (token != nullptr) {
             std::string tok = std::string(token);
 
-            printf ("%s\n",token); // TODO del
+            std::cerr << "token " << token << "\n"; // TODO del
             try {
-                res = std::stoull(tok);
+                res = audiogram::ntohll(std::stoull(tok));
             } catch (const std::exception &e) {
                 err = 1;
             }

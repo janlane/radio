@@ -16,6 +16,7 @@ protected:
     static const size_t MAX_NAME_LEN = 64;
 
     struct sockaddr_in mcast_addr = {0};
+    std::string mcast_addr_dotted = "";
     in_port_t data_port = (in_port_t)25826;
     in_port_t ctrl_port = (in_port_t)35826;
     size_t psize = 512;
@@ -27,12 +28,11 @@ protected:
 
     virtual int init(int argc, char *argv[]) {
         namespace po = boost::program_options;
-        std::string addr;
         int time = 250;
 
         po::options_description desc("Options");
         desc.add_options()
-                (",a", po::value<std::string>(&addr)->required(),
+                (",a", po::value<std::string>(&mcast_addr_dotted)->required(),
                  "mcast_addr")
                 (",P", po::value<in_port_t>(), "data_port")
                 (",C", po::value<in_port_t>(), "ctrl_port")
@@ -50,7 +50,7 @@ protected:
             return 1;
         }
 
-        if (!inet_pton(AF_INET, addr.c_str(), &mcast_addr.sin_addr)/* ||
+        if (!inet_pton(AF_INET, mcast_addr_dotted.c_str(), &mcast_addr.sin_addr)/* ||
             mcast_addr.sin_addr.s_addr < htonl(MIN_MCAST_ADDR_VAL) ||
             mcast_addr.sin_addr.s_addr > htonl(MAX_MCAST_ADDR_VAL) */) {
             std::cerr << "the argument ('" << inet_ntoa(mcast_addr.sin_addr) <<
@@ -90,11 +90,11 @@ protected:
         return prepare_to_send();
     }
 
-    int send_audiogram(std::vector<uint8_t> &a) {
+    int send_audiogram(audiogram &a) {
 //        for (int i = 0; i < psize + 16; ++i) {
 //            printf("%x", a[i] & 0xff);
 //        } printf("\n");
-        if (sendto(audio_tr.sock, (void *)a.data(), psize, 0,
+        if (sendto(audio_tr.sock, (void *)a.get_packet_data(), psize, 0,
                    (struct sockaddr *)&mcast_addr, sizeof(mcast_addr)) == -1) {
             std::cerr << "Error: audiogram sendto, errno = " << errno << "\n";
             return 1;
@@ -103,22 +103,19 @@ protected:
         return 0;
     }
 
-    int send_reply(sockaddr_in &addr) {
+    void send_reply(sockaddr_in &addr) {
         // BOREWICZ_HERE [MCAST_ADDR] [DATA_PORT] [nazwa stacji]
         char msg[MAX_CTRL_MSG_LEN];
         int msg_size = sprintf(msg, "%s %s %d %s\n", REPLY_MSG,
-                inet_ntoa(mcast_addr.sin_addr), htons(data_port), name.c_str());
-
+                mcast_addr_dotted.data(), data_port, name.data());
+        std::cerr << "Reply " << msg << " to " << inet_ntoa(addr.sin_addr) << "\n";
         if (msg_size < 0)
-            return 1;
+            return;
 
         if (sendto(replies_tr.sock, (void*)&msg, (size_t)msg_size, 0,
                    (struct sockaddr *)&addr, sizeof(addr)) == -1) {
             std::cerr << "Error: reply sendto, errno = " << errno << "\n";
-            return 1;
         }
-
-        return 0;
     }
 
 private:

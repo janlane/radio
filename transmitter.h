@@ -5,19 +5,13 @@
 #include <sys/socket.h>
 #include <iostream>
 #include <netinet/in.h>
+#include <fcntl.h>
 
 class transmitter {
 private:
     static const int TTL = 4; // TODO find the best
 
-public:
-    int sock = -1;
-
-    virtual ~transmitter() {
-        close(sock);
-    }
-
-    virtual int prepare_to_send() {
+    void prepare_to_send_helper() {
         int optval, err = 0;
 
         do {
@@ -41,6 +35,21 @@ public:
                 err = 1;
             }
         } while (err);
+    }
+public:
+    int sock = -1;
+
+    virtual ~transmitter() {
+        close(sock);
+    }
+
+    virtual int prepare_to_send() {
+        prepare_to_send_helper();
+    }
+
+    virtual int prepare_to_send_nonblock() {
+        prepare_to_send_helper();
+        fcntl(sock, O_NONBLOCK);
     }
 
 };
