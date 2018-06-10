@@ -71,7 +71,7 @@ public:
         // if (sock == -1) {
             local_address.sin_family = AF_INET;
             local_address.sin_addr.s_addr = htonl(INADDR_ANY);
-            local_address.sin_port = htons(addr.sin_port);
+            local_address.sin_port = addr.sin_port;
             if (bind(sock, (struct sockaddr *) &local_address, sizeof(local_address)) < 0) {
                 std::cerr << "Error: bind, errno = " << errno << "\n";
                 err = 1;

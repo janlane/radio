@@ -167,9 +167,10 @@ private:
 
                     stations_mut.lock();
                     station_det del_station = {0};
-                    if (handle_station_change(addr, name, &del_station)) {
+                    if (handle_stations_update(addr, name, &del_station)) {
                         if (mcast_addr.sin_addr.s_addr == del_station.addr.sin_addr.s_addr &&
                             mcast_addr.sin_port == del_station.addr.sin_port) {
+                            std::cerr << "LIST upd " << inet_ntoa(mcast_addr.sin_addr) << "\n";
                             if (!stations.empty()) {
                                 set_new_station();
                             }
@@ -185,11 +186,14 @@ private:
     void delete_inactive_stations() {
         stations_mut.lock();
         time_t now = time(nullptr);
+        station_det del_station = {0};
         for (auto mi = stations.begin(); mi != stations.end();) {
             for (auto li = mi->second.begin(); li != mi->second.end();) {
                 ++li;
+                std::cerr << "CHECK " << inet_ntoa(std::prev(li)->addr.sin_addr) << " " << ntohs(std::prev(li)->addr.sin_port) << "\n";
                 if (now - std::prev(li)->last_answ > DISCONNECT_INTERVAL) {
                     std::cerr << "deleting (name " << mi->first << " addr " << inet_ntoa(std::prev(li)->addr.sin_addr) << " port " << ntohs(std::prev(li)->addr.sin_port) << ")\n";
+                    del_station = *li;
                     mi->second.erase(std::prev(li));
                 }
             }
@@ -198,6 +202,14 @@ private:
                 std::cerr << "deleting name " << prev(mi)->first << "\n";
                 stations.erase(std::prev(mi));
             }
+        }std::cerr << "maintenance " << inet_ntoa(mcast_addr.sin_addr) << " " << ntohs(mcast_addr.sin_port) << "\n";
+        std::cerr << "m. played " << inet_ntoa(del_station.addr.sin_addr) << " " << ntohs(del_station.addr.sin_port) << "\n";
+        if (mcast_addr.sin_addr.s_addr == del_station.addr.sin_addr.s_addr &&
+            mcast_addr.sin_port == del_station.addr.sin_port) {
+            if (!stations.empty()) {
+                set_new_station();
+            }
+            no_refresh_menu.clear();
         }
         stations_mut.unlock();
     }
@@ -208,7 +220,9 @@ private:
         keep_playing.clear();
         keep_waiting.clear();
         mcast_mut.lock();std::cerr << "in 2 mutex\n";
-        mcast_rcv.drop_mcast();
+        mcast_rcv.drop_mcast();std::cerr << "MCAST bef change " << inet_ntoa(mcast_addr.sin_addr) << " p " << mcast_addr.sin_port << "\n";
+        mcast_addr = station.addr;
+        std::cerr << "MCAST aft change " << inet_ntoa(mcast_addr.sin_addr) << " p " << mcast_addr.sin_port << "\n";
         std::cerr << "set new station " << station.addr.sin_addr.s_addr << " " << inet_ntoa(station.addr.sin_addr) << " p " << station.addr.sin_port << "\n";
         mcast_rcv.prepare_to_receive_mcast(station.addr);
         mcast_mut.unlock();std::cerr << "out 1 mutex\n";
@@ -216,12 +230,12 @@ private:
     }
 
     void set_new_station() {
-        if (!stations.empty())
+        if (!stations.empty() && !stations.begin()->second.empty())
             set_new_station(stations.begin()->second.front());
     }
 
     /* returns 1 if station list changes, 0 otherwise */
-    int handle_station_change(sockaddr_in &addr, std::string &name, station_det *del_station) {
+    int handle_stations_update(sockaddr_in &addr, std::string &name, station_det *del_station) {
         time_t now = time(nullptr);
         if (stations.count(name)) {
             for (auto li = stations[name].begin(); li != stations[name].end(); ++li) {
@@ -245,7 +259,7 @@ private:
         } else {
             struct station_det sd = {addr, now};
             stations[name].push_back(sd);
-            std::cerr << "add station " << name << "\n";
+            std::cerr << "add station " << name << inet_ntoa(addr.sin_addr) << " " << ntohs(addr.sin_port) << "\n";
             return 1;
         }
     }
@@ -280,10 +294,9 @@ private:
             std::cerr << "port str " << port_str << "\n";
             try {
                 uint32_t port = (uint32_t)std::stoi(port_str);
-                std::cerr << "port " << port << "\n";
-                port = ntohs(port);
-                std::cerr << "cor port " << port << "\n";
-                if (port <= 0 || port > 65536)
+                //port = htons(port);
+                 std::cerr << "port network ord " << port << "\n";
+                if (ntohs(port) <= 0 || ntohs(port) > 65536)
                     err = 1;
                 else addr.sin_port = (in_port_t)port;
             } catch (std::exception const &) {
@@ -421,7 +434,7 @@ private:
         return 0;
     }
 
-    int uninitialized_recv(char *buffer, audiogram &a) {std::cerr << "uninrecv in\n";
+    int uninitialized_recv(char *buffer, audiogram &a) {
         ssize_t rcv_len = read(mcast_rcv.sock, (void *)buffer, MAX_UDP_MSG_LEN);
         if (rcv_len < 0) {
             return 1;
