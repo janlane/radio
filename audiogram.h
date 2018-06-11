@@ -49,6 +49,10 @@ public:
         return packet.empty();
     }
 
+    void clear() {
+        packet.clear();
+    }
+
     static inline uint64_t htonll(const uint64_t x) {
         return (1 == htonl(1)) ? x : ((uint64_t)htonl((uint32_t)(x & 0xFFFFFFFF)) << 32u) | htonl((uint32_t)(x >> 32u));
     }

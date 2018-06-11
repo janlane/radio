@@ -6,6 +6,9 @@
 #include <cerrno>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
+#include "boost/program_options.hpp"
+#include "audiogram.h"
 #include "transmitter.h"
 #include "const.h"
 

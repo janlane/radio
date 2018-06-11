@@ -81,6 +81,13 @@ private:
                 std::cerr << "Error: setsockopt broadcast\n";
                 err = 1;
             }
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 300000;
+            if (setsockopt(rcv_sock, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
+                std::cerr << "Error: setsockopt rcvtimeo\n";
+                err = 1;
+            }
 
             server_address.sin_family = AF_INET; // IPv4
             server_address.sin_addr.s_addr = htonl(INADDR_ANY); // listening on all interfaces
@@ -112,11 +119,13 @@ private:
                 if (std::cin.fail())
                     return;
 
+                // TODO temp
+                //if (a.get_packet_id() % 1000 != 0 && a.get_packet_id() % 1000 != 1 && a.get_packet_id() % 1000 != 2)
                 send_audiogram(a);
 
                 data_q.push_back(std::move(a));
                 packet_id += psize;
-            } while (/*ch::system_clock::now() - start < rtime && */!std::cin.eof());
+            } while (ch::system_clock::now() - start < rtime && !std::cin.eof());
 
             /* retransmit */
             retransmit_nums_mut.lock();
