@@ -9,9 +9,15 @@
 class audiogram {
 private:
     std::vector<uint8_t> packet;
+    bool fresh;
 
 public:
     static const int HEADER_SIZE = 16;
+
+    audiogram(size_t size, bool fresh) {
+        packet = std::vector<uint8_t>(size);
+        this->fresh = fresh;
+    }
 
     void set_size(size_t size) {
         packet = std::vector<uint8_t>(size);
@@ -51,6 +57,14 @@ public:
 
     void clear() {
         packet.clear();
+    }
+
+    bool is_fresh() {
+        return fresh;
+    }
+
+    bool set_fresh(bool fresh) {
+        this->fresh = fresh;
     }
 
     static inline uint64_t htonll(const uint64_t x) {

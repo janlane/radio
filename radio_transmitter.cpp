@@ -111,7 +111,7 @@ private:
             /* transmit */
             auto start = std::chrono::system_clock::now();
             do {
-                audiogram a;
+                audiogram a(psize, 1);
                 a.set_size(psize);
                 a.set_session_id(audiogram::htonll(session_id));
                 a.set_packet_id(audiogram::htonll(packet_id));

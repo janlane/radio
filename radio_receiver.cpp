@@ -21,7 +21,7 @@
 #include "transmitter.h"
 #include "const.h"
 
-static uint64_t count = 0;
+
 class radio_receiver {
 private:
     struct station_det {
@@ -32,7 +32,9 @@ private:
     };
 
     struct rexmit_data {
-        uint64_t id;
+        uint64_t min;
+        uint64_t max;
+        size_t psize;
         struct sockaddr_in direct;
     };
 
@@ -140,7 +142,7 @@ public:
         // run other threads
         std::thread t1(&radio_receiver::play, this);
         std::thread t2(&radio_receiver::receive_replies, this);
-        //std::thread t3(&radio_receiver::send_rexmit, this);
+        //std::thread t3(&radio_receiver::send_rexmits, this);
 
         while (true) {
             //delete_inactive_stations();std::cerr <<" bef sendlookup\n";
@@ -381,7 +383,7 @@ private:
             play = 0;
             end = 0;
             last_id_written = (uint64_t)-1;
-            audiogram a;
+            audiogram a(0, true);
 
             new_station_mut.lock();std::cerr<<"in newstmut\n";
             new_station_mut.unlock();std::cerr<<"after newstmut\n";
@@ -407,7 +409,6 @@ private:
                 }
 
                 if (!play) {
-                    a.set_size(psize);
                     ssize_t rcv_len = read(mcast_rcv.sock, (void *)a.get_packet_data(), psize);
                     if (rcv_len < 0) {
                         continue;
@@ -429,15 +430,21 @@ private:
                         continue;
                     case 1:
                     case 2:
-                        if (polled[0].revents & POLLOUT) {std::cerr<<"FF " << out_id << "/" << audio_buf.capacity() << "JJ";
-                            if (audio_buf[out_id].empty() ||
-                                audio_buf[out_id].get_packet_id() != last_id_written + psize &&
-                                last_id_written + 1 != 0) {std::cerr<<"HH";
+                        if (polled[0].revents & POLLOUT) {
+//                            if (audio_buf[out_id].empty() ||
+//                                audio_buf[out_id].get_packet_id() != last_id_written + psize &&
+//                                last_id_written + 1 != 0) {
+//                            uint64_t prev_id = (out_id - 1) % audio_buf.capacity();
+//                            if (audio_buf[prev_id].get_packet_id() + psize !=
+//                                audio_buf[out_id].get_packet_id() &&
+//                                audio_buf[prev_id].get_packet_id() != (uint64_t)-1) {
+                            if (!audio_buf[out_id].is_fresh()) {
                                 end = true;
-                                break;
-                            }std::cerr<<"GG";
+                                continue;
+                            }
                             std::cout.write((char *)audio_buf[out_id].get_audio_data(),
                                             psize - audiogram::HEADER_SIZE);
+                            audio_buf[out_id].set_fresh(false);
                             //std::cout.flush(); // keep deleted
                             last_id_written = audio_buf[out_id].get_packet_id();
                             out_id = (out_id + 1) % audio_buf.capacity();
@@ -485,39 +492,39 @@ private:
         if (packet_id > max_id_read + psize) {
             for (unsigned long i = (max_id_read / psize) % audio_buf.capacity() + 1; // max index
                     i < buf_id; ++i)
-                audio_buf[i].clear();
-            add_rexmit(max_id_read + psize, packet_id - psize);
+                audio_buf[i].set_fresh(false);
+//            add_rexmit(max_id_read + psize, packet_id - psize);
         }
 //        if (packet_id >= max_id_read + psize)
 //            max_id_read = packet_id;
-
+        a.set_fresh(true);
         audio_buf[buf_id] = a;
 
-        std::cerr << "count " << count++ << " ";
         return 0;
     }
 
     void add_rexmit(uint64_t min, uint64_t max) {
-        if (min <= max) {std::cerr << "min " << min << " max " << max << "\n";
+        if (min <= max) {//std::cerr << "min " << min << " max " << max << "\n";
             struct timeval moment;
             gettimeofday(&moment, nullptr);
             int batch = (int)((moment.tv_sec * 1000 + moment.tv_usec / 1000) % rtime);
             rexmit_batch_mut[batch].lock();
-            for (uint64_t i = min; i <= max; i+=psize) {//rexmit_batch[batch][station_name].
-                rexmit_batch[batch][station_name].push_back({i, direct_addr});
+            for (uint64_t i = min; i <= max; i += psize) {//rexmit_batch[batch][station_name].
+                rexmit_batch[batch][station_name].push_back({min, max, psize, direct_addr});
                 //std::cerr << "rexmit add to list " << i << " -> " << inet_ntoa(direct_addr.sin_addr) << "\n";
             }
             rexmit_batch_mut[batch].unlock();
         }
     }
 
-    void send_rexmit() {
+    void send_rexmits() {
         while (true) {
             for (int i = 0; i < rtime; ++i) {
-                rexmit_batch_mut[i].lock();
                 name_mut.lock();
                 std::string name = station_name;
                 name_mut.unlock();
+                rexmit_batch_mut[i].lock();
+
                 std::list<rexmit_data> &rdl = rexmit_batch[i][name];
 
                 for (auto mi = rexmit_batch[i].begin();
@@ -526,16 +533,11 @@ private:
                     for (auto li = mi->second.begin();
                             li != mi->second.end();) {
                         ++li;
-                        if (mi->first == name &&
-                            std::prev(li)->id <= last_id_written) {
-                            rdl.erase(std::prev(li));
-                        } else {
-                            msg.append(std::to_string(std::prev(li)->id));
-                            if (li != mi->second.end())
-                                msg.append(",");
-                        }
+
+                        build_rexmit(msg, mi->first, name, li, mi);
                     }
-                    if (!rdl.empty()) {
+
+                    if (msg.size() > strlen(REXMIT_MSG)) {
                         msg.append("\n");
                         std::cerr << msg;
                         sendto(direct_tr.sock, (void *) msg.c_str(), msg.size(),
@@ -550,17 +552,43 @@ private:
         }
     }
 
+    void build_rexmit(std::string msg, const std::string &to_station_name,
+        std::string &cur_station_name, std::list<rexmit_data>::iterator &li,
+        std::unordered_map<std::string, std::list<rexmit_data>>::iterator &mi) {
+        rexmit_data &rd = *std::prev(li);
+
+        if (to_station_name == cur_station_name) {
+            uint64_t circa_last_id_written = last_id_written;
+            uint64_t i;
+            for (i = rd.min; i <= circa_last_id_written;
+                    i += rd.psize) {
+
+                if (i > rd.max) {
+                    mi->second.erase(std::prev(li));
+                    return;
+                }
+            }
+            rd.min = i;
+        }
+
+        for (uint64_t i = rd.min; i <= rd.max; i += rd.psize) {
+            msg.append(std::to_string(i));
+            if (i != rd.max && li != mi->second.end())
+                msg.append(",");
+        }
+    }
+
     int uninitialized_recv(char *buffer, audiogram &a) {
         ssize_t rcv_len = read(mcast_rcv.sock, (void *)buffer, MAX_UDP_MSG_LEN);
         if (rcv_len < 0) {
             return 1;
         } else {
             psize = (size_t) rcv_len;
-            audio_buf = std::vector<audiogram>(bsize / psize);
+            audio_buf = std::vector<audiogram>(bsize / psize, audiogram(0, false));
             a.set_size(psize);
             a.set_session_id(*(uint64_t *)buffer);
             a.set_packet_id(*(uint64_t *)(buffer + sizeof(uint64_t)));
-            memcpy(a.get_audio_data(), buffer, psize - audiogram::HEADER_SIZE);
+            memcpy(a.get_packet_data(), buffer, psize);
             return 0;
         }
     }
