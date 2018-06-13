@@ -52,7 +52,7 @@ private:
     in_port_t ui_port = (in_port_t)15826;
     size_t bsize = 8*65536; // TODO change
     size_t psize;
-    unsigned long rtime = 250; // in milliseconds
+    unsigned long rtime = 100; // TODO 250 in milliseconds
 
     std::map<std::string, std::list<struct station_det>> stations;
     std::vector<audiogram> audio_buf;
@@ -120,6 +120,7 @@ public:
             return 1;
         }
 
+        last_id_written = 0;
         rexmit_batch_mut = std::vector<std::mutex>(rtime);
         rexmit_batch =
             std::vector<std::unordered_map<std::string, std::list<rexmit_data>>>(rtime);
@@ -142,7 +143,7 @@ public:
         // run other threads
         std::thread t1(&radio_receiver::play, this);
         std::thread t2(&radio_receiver::receive_replies, this);
-        //std::thread t3(&radio_receiver::send_rexmits, this);
+        std::thread t3(&radio_receiver::send_rexmits, this);
 
         while (true) {
             //delete_inactive_stations();std::cerr <<" bef sendlookup\n";
@@ -372,7 +373,6 @@ private:
         char buffer[MAX_UDP_MSG_LEN];
         uint64_t session_id, byte_zero;
         uint64_t max_id_read;
-        last_id_written = (uint64_t)-1;
         struct pollfd polled[2];
         polled[0].fd = STDOUT_FILENO;
         polled[0].events = POLLOUT;
@@ -382,7 +382,7 @@ private:
             initialized = 0;
             play = 0;
             end = 0;
-            last_id_written = (uint64_t)-1;
+            last_id_written = 0;
             audiogram a(0, true);
 
             new_station_mut.lock();std::cerr<<"in newstmut\n";
@@ -431,14 +431,7 @@ private:
                     case 1:
                     case 2:
                         if (polled[0].revents & POLLOUT) {
-//                            if (audio_buf[out_id].empty() ||
-//                                audio_buf[out_id].get_packet_id() != last_id_written + psize &&
-//                                last_id_written + 1 != 0) {
-//                            uint64_t prev_id = (out_id - 1) % audio_buf.capacity();
-//                            if (audio_buf[prev_id].get_packet_id() + psize !=
-//                                audio_buf[out_id].get_packet_id() &&
-//                                audio_buf[prev_id].get_packet_id() != (uint64_t)-1) {
-                            if (!audio_buf[out_id].is_fresh()) {
+                            if (!audio_buf[out_id].is_fresh()) {std::cerr<<"REASON2";
                                 end = true;
                                 continue;
                             }
@@ -483,8 +476,7 @@ private:
         if (((packet_id - byte_zero) % psize) != 0)
             return 0;
         unsigned long buf_id = (packet_id - byte_zero) / psize;
-        if (buf_id >= audio_buf.size() + out_id) {
-            std::cerr << "in_id = " << buf_id << " out = " << out_id << "\n";
+        if (buf_id >= audio_buf.capacity() + out_id) { std::cerr<<"REASON1";
             return 1;
         }
         buf_id = ((packet_id - byte_zero) / psize) % audio_buf.capacity();
@@ -493,10 +485,11 @@ private:
             for (unsigned long i = (max_id_read / psize) % audio_buf.capacity() + 1; // max index
                     i < buf_id; ++i)
                 audio_buf[i].set_fresh(false);
-//            add_rexmit(max_id_read + psize, packet_id - psize);
+            add_rexmit(max_id_read + psize, packet_id - psize);
         }
-//        if (packet_id >= max_id_read + psize)
-//            max_id_read = packet_id;
+        if (packet_id >= max_id_read + psize)
+            max_id_read = packet_id;
+
         a.set_fresh(true);
         audio_buf[buf_id] = a;
 
@@ -509,10 +502,11 @@ private:
             gettimeofday(&moment, nullptr);
             int batch = (int)((moment.tv_sec * 1000 + moment.tv_usec / 1000) % rtime);
             rexmit_batch_mut[batch].lock();
-            for (uint64_t i = min; i <= max; i += psize) {//rexmit_batch[batch][station_name].
-                rexmit_batch[batch][station_name].push_back({min, max, psize, direct_addr});
+//            for (uint64_t i = min; i <= max; i += psize) {
+            std::cerr << "ADDREXMIT " << min << " " << max << "\n";
+            rexmit_batch[batch][station_name].push_back({min, max, psize, direct_addr});
                 //std::cerr << "rexmit add to list " << i << " -> " << inet_ntoa(direct_addr.sin_addr) << "\n";
-            }
+//            }
             rexmit_batch_mut[batch].unlock();
         }
     }
@@ -528,23 +522,25 @@ private:
                 std::list<rexmit_data> &rdl = rexmit_batch[i][name];
 
                 for (auto mi = rexmit_batch[i].begin();
-                        mi != rexmit_batch[i].end(); ++mi) {
+                        mi != rexmit_batch[i].end();) {
                     std::string msg(REXMIT_MSG);
                     for (auto li = mi->second.begin();
                             li != mi->second.end();) {
                         ++li;
-
                         build_rexmit(msg, mi->first, name, li, mi);
                     }
 
+                    auto old_mi = mi;
+                    ++mi;
                     if (msg.size() > strlen(REXMIT_MSG)) {
                         msg.append("\n");
                         std::cerr << msg;
+                        std::cerr << "send to " << inet_ntoa(old_mi->second.front().direct.sin_addr) << " " << ntohs(old_mi->second.front().direct.sin_port) << "\n";
                         sendto(direct_tr.sock, (void *) msg.c_str(), msg.size(),
-                               0, (struct sockaddr *) &rdl.front().direct,
-                               sizeof(rdl.front().direct));
+                               0, (struct sockaddr *) &old_mi->second.front().direct,
+                               sizeof(old_mi->second.front().direct));
                     } else {
-                        rexmit_batch[i].erase(name);
+                        rexmit_batch[i].erase(old_mi->first);
                     }
                 }
                 rexmit_batch_mut[i].unlock();
@@ -552,28 +548,29 @@ private:
         }
     }
 
-    void build_rexmit(std::string msg, const std::string &to_station_name,
+    void build_rexmit(std::string &msg, const std::string &to_station_name,
         std::string &cur_station_name, std::list<rexmit_data>::iterator &li,
         std::unordered_map<std::string, std::list<rexmit_data>>::iterator &mi) {
         rexmit_data &rd = *std::prev(li);
 
-        if (to_station_name == cur_station_name) {
-            uint64_t circa_last_id_written = last_id_written;
-            uint64_t i;
-            for (i = rd.min; i <= circa_last_id_written;
-                    i += rd.psize) {
-
-                if (i > rd.max) {
-                    mi->second.erase(std::prev(li));
-                    return;
-                }
-            }
-            rd.min = i;
-        }
+//        if (to_station_name == cur_station_name) {
+//            uint64_t circa_last_id_written = last_id_written;
+//            uint64_t i;
+////            for (i = rd.min; i <= circa_last_id_written;
+////                    i += rd.psize) {
+////
+//////                if (i > rd.max) {std::cerr << "EMPTIED\n";
+//////                    mi->second.erase(std::prev(li));
+//////                    return;
+//////                }
+////            }
+//            rd.min = i;
+//        }
 
         for (uint64_t i = rd.min; i <= rd.max; i += rd.psize) {
-            msg.append(std::to_string(i));
-            if (i != rd.max && li != mi->second.end())
+            msg.append(std::to_string(audiogram::htonll(i)));
+
+            if (i != rd.max || li != mi->second.end())
                 msg.append(",");
         }
     }

@@ -23,7 +23,7 @@ protected:
     in_port_t data_port = (in_port_t)25826;
     in_port_t ctrl_port = (in_port_t)35826;
     size_t psize = 512;
-    size_t fsize = 128 * 1000;
+    size_t fsize = 128 * 1000 * 1000 * 10;
     std::chrono::milliseconds rtime = std::chrono::milliseconds(250);
     std::string name = "Nienazwany Nadajnik";
     transmitter audio_tr;

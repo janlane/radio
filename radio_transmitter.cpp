@@ -50,9 +50,10 @@ public:
 
     void work() {
         keep_listening.test_and_set();
-        std::thread t1(&radio_transmitter::listen_for_incoming, this);
+        std::thread t1(&radio_transmitter::listen_for_incoming_lookups, this);
         stop_replying.test_and_set();
         std::thread t2(&radio_transmitter::send_replies, this);
+        std::thread t3(&radio_transmitter::listen_for_incoming_rexmits, this);
 
         transmit_and_retransmit();
         keep_listening.clear();
@@ -120,7 +121,7 @@ private:
                     return;
 
                 // TODO temp
-                //if (a.get_packet_id() % 1000 != 0 && a.get_packet_id() % 1000 != 1 && a.get_packet_id() % 1000 != 2)
+                if (a.get_packet_id() % 1000000 != 0 && (a.get_packet_id() + psize) % 1000000 != 0)
                 send_audiogram(a);
 
                 data_q.push_back(std::move(a));
@@ -136,7 +137,7 @@ private:
 
             int q = 0;
             for (uint64_t num : *nums_ptr) {
-                while (q < data_q.size() && num < data_q[q].get_packet_id())
+                while (q < data_q.size() && num > data_q[q].get_packet_id())
                     ++q;
                 if (q == data_q.size())
                     break;
@@ -149,7 +150,7 @@ private:
         }
     }
 
-    void listen_for_incoming() {
+    void listen_for_incoming_lookups() {
         prepare_to_receive();
         char buffer[MAX_UDP_MSG_LEN];
 
@@ -160,7 +161,7 @@ private:
                     0, (struct sockaddr *)&rcv_addr, &rcv_addr_len);
 
             if (rcv_len < 0) {
-                std::cerr << "Error: rcv_ctrl rcvfrom\n";
+                //std::cerr << "Error: rcv_ctrl rcvfrom\n";
             } else {
                 //printf("read %zd bytes: %.*s\n", rcv_len, (int) rcv_len, buffer);
                 buffer[rcv_len] = '\0';
@@ -172,7 +173,27 @@ private:
                         std::cerr << "reply pushed with " << inet_ntoa(rcv_addr.sin_addr) << "\n";
                         replies_mut.unlock();
                     }
-                } else if (buffer[0] == REXMIT_MSG[0]) {
+                }
+            }
+        }
+    }
+
+    void listen_for_incoming_rexmits() {
+        char buffer[MAX_UDP_MSG_LEN];
+
+        while (keep_listening.test_and_set()) {
+            struct sockaddr_in rcv_addr;
+            socklen_t rcv_addr_len = (socklen_t)sizeof(rcv_addr);
+            ssize_t rcv_len = recvfrom(replies_tr.sock, (void *)&buffer, sizeof(buffer),
+                                       0, (struct sockaddr *)&rcv_addr, &rcv_addr_len);
+
+            if (rcv_len < 0) {
+                //std::cerr << "Error: rcv_ctrl rcvfrom\n";
+            } else {
+                //printf("read %zd bytes: %.*s\n", rcv_len, (int) rcv_len, buffer);
+                buffer[rcv_len] = '\0';
+
+                if (buffer[0] == REXMIT_MSG[0]) {
                     std::vector<uint64_t> results;
                     if (!parse_rexmit(buffer, (size_t)rcv_len, results)) {
                         retransmit_nums_mut.lock();
@@ -215,12 +236,15 @@ private:
 
         uint64_t res = 0;
         int err = 0;
-        char *token = strtok(msg, ",");
+        strtok(msg, " ");
+        char *token = strtok(nullptr, ",");
 
         while (token != nullptr) {
-            std::string tok = std::string(token);
+            std::string tok(token);
 
-            std::cerr << "token " << token << "\n"; // TODO del
+            if (tok[0] == '-')
+                err = 1;
+
             try {
                 res = audiogram::ntohll(std::stoull(tok));
             } catch (const std::exception &e) {
