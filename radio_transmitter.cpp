@@ -30,7 +30,8 @@ private:
     std::queue<sockaddr_in> replies_q;
     std::mutex retransmit_nums_mut;
     std::mutex replies_mut;
-    std::atomic_flag keep_listening = ATOMIC_FLAG_INIT;
+    std::atomic_flag keep_listening_lookups = ATOMIC_FLAG_INIT;
+    std::atomic_flag keep_listening_rexmits = ATOMIC_FLAG_INIT;
     std::atomic_flag stop_replying = ATOMIC_FLAG_INIT;
     int rcv_sock = -1;
 
@@ -43,20 +44,23 @@ public:
         data_q = boost::circular_buffer<audiogram>(fsize / psize);
         retransmit_nums_ptr = std::make_unique<std::set<uint64_t>>();
         audio_transmitter::init(argc, argv);
+        fcntl(replies_tr.sock, F_SETFL, O_NONBLOCK);
 //        std::ios_base::sync_with_stdio(false);
 //        std::cin.tie(nullptr);
 //        std::cerr.tie(nullptr);
     }
 
     void work() {
-        keep_listening.test_and_set();
+        keep_listening_lookups.test_and_set();
         std::thread t1(&radio_transmitter::listen_for_incoming_lookups, this);
         stop_replying.test_and_set();
         std::thread t2(&radio_transmitter::send_replies, this);
+        keep_listening_rexmits.test_and_set();
         std::thread t3(&radio_transmitter::listen_for_incoming_rexmits, this);
 
         transmit_and_retransmit();
-        keep_listening.clear();
+        keep_listening_lookups.clear();
+        keep_listening_rexmits.clear();
         stop_replying.clear();
 
         t1.join();
@@ -155,7 +159,7 @@ private:
         prepare_to_receive();
         char buffer[MAX_UDP_MSG_LEN];
 
-        while (keep_listening.test_and_set()) {
+        while (keep_listening_lookups.test_and_set()) {
             struct sockaddr_in rcv_addr;
             socklen_t rcv_addr_len = (socklen_t)sizeof(rcv_addr);
             ssize_t rcv_len = recvfrom(rcv_sock, (void *)&buffer, sizeof(buffer),
@@ -182,7 +186,7 @@ private:
     void listen_for_incoming_rexmits() {
         char buffer[MAX_UDP_MSG_LEN];
 
-        while (keep_listening.test_and_set()) {
+        while (keep_listening_rexmits.test_and_set()) {
             struct sockaddr_in rcv_addr;
             socklen_t rcv_addr_len = (socklen_t)sizeof(rcv_addr);
             ssize_t rcv_len = recvfrom(replies_tr.sock, (void *)&buffer, sizeof(buffer),

@@ -152,20 +152,25 @@ private:
     }
 
     void up_action(int action_sock) {
-        //selected_option = (new_option == 0) ? selected_option : new_option;
+        stations_mut.lock();
+        name_mut.lock();
         auto station_id = stations.find(station_name);
+        name_mut.unlock();
         if (station_id != stations.begin() && station_id != stations.end())
             set_new_station(std::prev(stations.find(station_name))->second.front());
         print_menu(action_sock);
+        stations_mut.unlock();
     }
 
     void down_action(int action_sock) {
-        //selected_option = (new_option > menu_A_size) ? selected_option : new_option;
-        //set_new_station(prev(stations.find(station_name))->front()) // if stations.find not end
+        stations_mut.lock();
+        name_mut.lock();
         auto station_id = stations.find(station_name);
+        name_mut.unlock();
         if (station_id != stations.end() && std::next(station_id) != stations.end())
             set_new_station(std::next(stations.find(station_name))->second.front());
         print_menu(action_sock);
+        stations_mut.unlock();
     }
 
     void serve_clients() {
@@ -198,6 +203,9 @@ private:
                         fcntl(msg_sock, F_SETFL, O_NONBLOCK);
 
                         prepare_client_terminal(msg_sock);
+                        stations_mut.lock();
+                        print_menu(msg_sock);
+                        stations_mut.unlock();
                         for (i = 1; i < _POSIX_OPEN_MAX; ++i) {
                             if (client[i].fd == -1) {
                                 client[i].fd = msg_sock;
@@ -222,15 +230,20 @@ private:
                 }
             }
 
-            if (key == UP || key == DOWN) {
+            if (key == UP || key == DOWN || !unchanged_list.test_and_set()) {
                 ret = poll(client, _POSIX_OPEN_MAX, 100);
                 if (ret > 0) {
                     for (i = 1; i < _POSIX_OPEN_MAX; ++i) {
                         if (client[i].fd != -1 && (client[i].revents & POLLOUT)) {
-                            if (key == UP)
+                            if (key == UP) {
                                 up_action(client[i].fd);
-                            else // key == DOWN
+                            } else if (key == DOWN) {// key == DOWN
                                 down_action(client[i].fd);
+                            } else {
+                                stations_mut.lock();
+                                print_menu(msg_sock);
+                                stations_mut.unlock();
+                            }
 //                            if (rval < 0) {
 //                                close(client[i].fd);
 //                                client[i].fd = -1;
@@ -238,7 +251,7 @@ private:
                         }
                     }
                 }
-            } // TODO else if (!unchanged_list.test_and_set())
+            }
         }
     }
 
