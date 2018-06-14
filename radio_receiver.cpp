@@ -23,7 +23,7 @@
 
 
 class radio_receiver {
-private:
+protected:
     struct station_det {
         struct sockaddr_in addr;
         struct sockaddr_in direct;
@@ -73,90 +73,7 @@ private:
     std::vector<std::mutex> rexmit_batch_mut;
     std::vector<std::unordered_map<std::string, std::list<rexmit_data>>> rexmit_batch;
 
-public:
-    int init(int argc, char *argv[]) {
-        namespace po = boost::program_options;
-        std::string addr;
-        discover_addr.sin_addr.s_addr = htonl(DEFAULT_DISCOVER_ADDR);
-        discover_addr.sin_family = AF_INET;
 
-        po::options_description desc("Options");
-        desc.add_options()
-                (",d", po::value<std::string>(&addr), "discover_addr")
-                (",C", po::value<in_port_t>(&ctrl_port), "ctrl_port")
-                (",U", po::value<in_port_t>(&ui_port), "ui_port")
-                (",b", po::value<size_t>(&bsize), "bsize")
-                (",n", po::value<std::string>(&station_name), "name")
-                (",r", po::value<unsigned long>(&rtime), "rtime");
-
-        po::variables_map vm;
-        try {
-            po::store(po::parse_command_line(argc, argv, desc), vm);
-            po::notify(vm);
-        } catch (po::error &e) {
-            std::cerr << e.what() << "\n";
-            return 1;
-        }
-
-        ctrl_port = htons(ctrl_port);
-        ui_port = htons(ui_port);
-        discover_addr.sin_port = ctrl_port;
-
-        if (!addr.empty() && !inet_pton(AF_INET, addr.c_str(), &discover_addr)) {
-            std::cerr << "the argument ('" << addr <<
-                      "') for option '-a' is invalid\n";
-            return 1;
-        }
-        if (ctrl_port == 0) {
-            std::cerr << "the argument ('0') for option '--C' is invalid\n";
-            return 1;
-        }
-        if (ui_port == 0) {
-            std::cerr << "the argument ('0') for option '--U' is invalid\n";
-            return 1;
-        }
-        if (bsize == 0) {
-            std::cerr << "the argument ('0') for option '--b' is invalid\n";
-            return 1;
-        }
-
-        last_id_written = 0;
-        rexmit_batch_mut = std::vector<std::mutex>(rtime);
-        rexmit_batch =
-            std::vector<std::unordered_map<std::string, std::list<rexmit_data>>>(rtime);
-        lookup_tr_reply_rcv.prepare_to_receive();
-        fcntl(lookup_tr_reply_rcv.sock, F_SETFL, O_NONBLOCK);
-        rexmit_tr.prepare_to_send();
-        direct_tr.prepare_to_send_nonblock();
-        keep_waiting.test_and_set();
-        keep_playing.test_and_set();
-        no_refresh_menu.test_and_set();
-
-        return 0;
-    }
-
-    void work() {
-        std::ios_base::sync_with_stdio(false);
-        std::cin.tie(nullptr);
-        std::cerr.tie(nullptr);
-
-        // run other threads
-        std::thread t1(&radio_receiver::play, this);
-        std::thread t2(&radio_receiver::receive_replies, this);
-        std::thread t3(&radio_receiver::send_rexmits, this);
-
-        while (true) {
-            //delete_inactive_stations();std::cerr <<" bef sendlookup\n";
-            send_lookup();std::cerr << "aft sendlookup\n";
-            sleep(LOOKUP_INTERVAL);
-        }
-
-        // t1.join();
-        // t2.join();
-        // t3.join();
-    }
-
-private:
     void send_lookup() {
         if (sendto(lookup_tr_reply_rcv.sock, (void*)LOOKUP_MSG, (size_t)LOOKUP_MSG_LEN, 0,
                    (struct sockaddr *)&discover_addr, sizeof(discover_addr)) == -1) {
@@ -589,12 +506,95 @@ private:
             return 0;
         }
     }
+
+public:
+    int init(int argc, char *argv[]) {
+        namespace po = boost::program_options;
+        std::string addr;
+        discover_addr.sin_addr.s_addr = htonl(DEFAULT_DISCOVER_ADDR);
+        discover_addr.sin_family = AF_INET;
+
+        po::options_description desc("Options");
+        desc.add_options()
+                (",d", po::value<std::string>(&addr), "discover_addr")
+                (",C", po::value<in_port_t>(&ctrl_port), "ctrl_port")
+                (",U", po::value<in_port_t>(&ui_port), "ui_port")
+                (",b", po::value<size_t>(&bsize), "bsize")
+                (",n", po::value<std::string>(&station_name), "name")
+                (",r", po::value<unsigned long>(&rtime), "rtime");
+
+        po::variables_map vm;
+        try {
+            po::store(po::parse_command_line(argc, argv, desc), vm);
+            po::notify(vm);
+        } catch (po::error &e) {
+            std::cerr << e.what() << "\n";
+            return 1;
+        }
+
+        ctrl_port = htons(ctrl_port);
+        ui_port = htons(ui_port);
+        discover_addr.sin_port = ctrl_port;
+
+        if (!addr.empty() && !inet_pton(AF_INET, addr.c_str(), &discover_addr)) {
+            std::cerr << "the argument ('" << addr <<
+                      "') for option '-a' is invalid\n";
+            return 1;
+        }
+        if (ctrl_port == 0) {
+            std::cerr << "the argument ('0') for option '--C' is invalid\n";
+            return 1;
+        }
+        if (ui_port == 0) {
+            std::cerr << "the argument ('0') for option '--U' is invalid\n";
+            return 1;
+        }
+        if (bsize == 0) {
+            std::cerr << "the argument ('0') for option '--b' is invalid\n";
+            return 1;
+        }
+
+        last_id_written = 0;
+        rexmit_batch_mut = std::vector<std::mutex>(rtime);
+        rexmit_batch =
+                std::vector<std::unordered_map<std::string, std::list<rexmit_data>>>(rtime);
+        lookup_tr_reply_rcv.prepare_to_receive();
+        fcntl(lookup_tr_reply_rcv.sock, F_SETFL, O_NONBLOCK);
+        rexmit_tr.prepare_to_send();
+        direct_tr.prepare_to_send_nonblock();
+        keep_waiting.test_and_set();
+        keep_playing.test_and_set();
+        no_refresh_menu.test_and_set();
+
+        return 0;
+    }
+
+    void work() {
+        std::ios_base::sync_with_stdio(false);
+        std::cin.tie(nullptr);
+        std::cerr.tie(nullptr);
+
+        // run other threads
+        std::thread t1(&radio_receiver::play, this);
+        std::thread t2(&radio_receiver::receive_replies, this);
+        std::thread t3(&radio_receiver::send_rexmits, this);
+
+        while (true) {
+            //delete_inactive_stations();std::cerr <<" bef sendlookup\n";
+            send_lookup();std::cerr << "aft sendlookup\n";
+            sleep(LOOKUP_INTERVAL);
+        }
+
+        // t1.join();
+        // t2.join();
+        // t3.join();
+    }
 };
 
-int main(int argc, char *argv[]) {
-    radio_receiver r;
-    if (r.init(argc, argv)) return 1;
-    r.work();
-
-    return 0;
-}
+//int main(int argc, char *argv[]) {
+//    radio_receiver r;
+//    if (r.init(argc, argv)) return 1;
+//    r.work();
+//
+//    return 0;
+//}

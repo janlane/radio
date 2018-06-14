@@ -61,6 +61,7 @@ public:
 
         t1.join();
         t2.join();
+        t3.join();
     }
 
 private:
@@ -142,9 +143,9 @@ private:
                 if (q == data_q.size())
                     break;
 
-                if (num == data_q[q].get_packet_id()) {
+                if (num == data_q[q].get_packet_id())
                     send_audiogram(data_q[q]);
-                }
+
                 ++q;
             }
         }
