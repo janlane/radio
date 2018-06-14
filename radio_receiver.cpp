@@ -50,9 +50,9 @@ protected:
     struct sockaddr_in discover_addr;
     in_port_t ctrl_port = (in_port_t)35826;
     in_port_t ui_port = (in_port_t)15826;
-    size_t bsize = 8*65536; // TODO change
+    size_t bsize = 65536;
     size_t psize;
-    unsigned long rtime = 100; // TODO 250 in milliseconds
+    unsigned long rtime = 250;
 
     std::map<std::string, std::list<struct station_det>> stations;
     std::vector<audiogram> audio_buf;
@@ -69,7 +69,6 @@ protected:
     std::atomic<uint64_t> last_id_written;
     std::atomic_flag keep_waiting = ATOMIC_FLAG_INIT;
     std::atomic_flag keep_playing = ATOMIC_FLAG_INIT;
-    std::atomic_flag no_refresh_menu = ATOMIC_FLAG_INIT;
     std::atomic_flag unchanged_list = ATOMIC_FLAG_INIT;
     std::vector<std::mutex> rexmit_batch_mut;
     std::vector<std::unordered_map<std::string, std::list<rexmit_data>>> rexmit_batch;
@@ -131,7 +130,6 @@ public:
         direct_tr.prepare_to_send_nonblock();
         keep_waiting.test_and_set();
         keep_playing.test_and_set();
-        no_refresh_menu.test_and_set();
         unchanged_list.test_and_set();
 
         return 0;
@@ -202,7 +200,6 @@ protected:
                             if (!stations.empty()) {
                                 set_new_station();
                             }
-                            no_refresh_menu.clear();
                         } else {
                             name_mut.unlock();
                         }
@@ -224,7 +221,8 @@ protected:
                 if (now - std::prev(li)->last_answ > DISCONNECT_INTERVAL) {
                     std::cerr << "deleting (name " << mi->first << " addr " << inet_ntoa(std::prev(li)->addr.sin_addr) << " port " << ntohs(std::prev(li)->addr.sin_port) << ")\n";
                     del_station = *(std::prev(li));
-                    clean_rexmits(del_station.name);
+                    std::string temp("ABs");
+                    clean_rexmits(temp);
                     mi->second.erase(std::prev(li));
                 }
             }
@@ -240,13 +238,12 @@ protected:
             if (!stations.empty()) {
                 set_new_station();
             }
-            no_refresh_menu.clear();
         }
         stations_mut.unlock();std::cerr << "out del inact" << "\n";
     }
 
-    void clean_rexmits(std::string &name) { std::cerr <<"in_clean_rexmits\n";
-        for (unsigned long i = rtime - 1; i >= 0; --i) {
+    void clean_rexmits(std::string &name) {
+        for (long i = rtime - 1; i >= 0; --i) {
             rexmit_batch_mut[i].lock();
             rexmit_batch[i].erase(name);
             rexmit_batch_mut[i].unlock();
@@ -521,8 +518,6 @@ protected:
                 std::string name = station_name;
                 name_mut.unlock();
                 rexmit_batch_mut[i].lock();
-
-                std::list<rexmit_data> &rdl = rexmit_batch[i][name];
 
                 for (auto mi = rexmit_batch[i].begin();
                         mi != rexmit_batch[i].end();) {

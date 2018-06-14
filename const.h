@@ -4,7 +4,7 @@
 
 /* first chars of LOOKUP_MSG and REXMIT_MSG shall remain different */
 #define TOP "------------------------------------------------------------------------\r\n  SIK Radio\r\n------------------------------------------------------------------------\r\n"
-#define FOOT "------------------------------------------------------------------------"
+#define FOOT "------------------------------------------------------------------------\r\n"
 #define CHOICE "  > "
 #define NO_CHOICE "    "
 #define LOOKUP_MSG "ZERO_SEVEN_COME_IN\n"
