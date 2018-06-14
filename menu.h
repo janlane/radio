@@ -133,13 +133,13 @@ private:
                 return END;
         }
 
-        if (buffer_position < buffer_volume) {
+        while (buffer_position < buffer_volume) {
             refresh_history(buffer[buffer_position]);
             buffer_position++;
 
-            if (HISTORY.count >= 2 && HISTORY.first == ENTER_CHARS[1] &&
-                HISTORY.second == ENTER_CHARS[0])
-                return ENTER;
+//            if (HISTORY.count >= 2 && HISTORY.first == ENTER_CHARS[1] &&
+//                HISTORY.second == ENTER_CHARS[0])
+//                return ENTER;
 
             if (HISTORY.count == 3 && HISTORY.third == UP_CHARS[0] &&
                 HISTORY.second == UP_CHARS[1]) {
@@ -149,6 +149,7 @@ private:
                     return DOWN;
             }
         }
+        return OTHER;
     }
 
     void up_action(int action_sock) {
@@ -216,29 +217,29 @@ private:
                 }
 
                 for (i = 1; i < _POSIX_OPEN_MAX; ++i) {
-                    if (client[i].fd != -1 && (client[i].revents & (POLLIN))) {
-                        key = get_key_code(client[i].fd, buffer);
+                    if (client[i].fd != -1 && (client[i].revents & (POLLIN))) {std::cerr << "pregetkey\n";
+                        key = get_key_code(client[i].fd, buffer); std::cerr << "getkey\n";
 //                        if (rval <= 0) {
 //                            close(client[i].fd);
 //                            client[i].fd = -1;
 //                        } else {
 //                            break;
 //                        }
-                        if (key == UP || key == DOWN)
-                            break;
+                        if (key == UP || key == DOWN) {std::cerr <<"TRUE\n";
+                            break;}
                     }
                 }
             }
 
             if (key == UP || key == DOWN || !unchanged_list.test_and_set()) {
-                ret = poll(client, _POSIX_OPEN_MAX, 100);
+                ret = poll(client, _POSIX_OPEN_MAX, 500);
                 if (ret > 0) {
                     for (i = 1; i < _POSIX_OPEN_MAX; ++i) {
                         if (client[i].fd != -1 && (client[i].revents & POLLOUT)) {
-                            if (key == UP) {
+                            if (key == UP) { std::cerr << "upaction\n";
                                 up_action(client[i].fd);
                             } else if (key == DOWN) {// key == DOWN
-                                down_action(client[i].fd);
+                                down_action(client[i].fd);std::cerr <<"downadction\n";
                             } else {
                                 stations_mut.lock();
                                 print_menu(msg_sock);

@@ -221,8 +221,7 @@ protected:
                 if (now - std::prev(li)->last_answ > DISCONNECT_INTERVAL) {
                     std::cerr << "deleting (name " << mi->first << " addr " << inet_ntoa(std::prev(li)->addr.sin_addr) << " port " << ntohs(std::prev(li)->addr.sin_port) << ")\n";
                     del_station = *(std::prev(li));
-                    std::string temp("ABs");
-                    clean_rexmits(temp);
+                    clean_rexmits(del_station.name);
                     mi->second.erase(std::prev(li));
                 }
             }
