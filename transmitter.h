@@ -1,7 +1,7 @@
 #ifndef RADIO_TRANSMITTER_H
 #define RADIO_TRANSMITTER_H
 
-
+#include <unistd.h>
 #include <sys/socket.h>
 #include <iostream>
 #include <netinet/in.h>
@@ -9,7 +9,7 @@
 
 class transmitter {
 private:
-    static const int TTL = 4; // TODO find the best
+    static const int TTL = 4;
 
     void prepare_to_send_helper() {
         int optval, err = 0;

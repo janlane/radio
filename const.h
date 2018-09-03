@@ -1,6 +1,7 @@
 #ifndef RADIO_CONST_H
 #define RADIO_CONST_H
 
+#include <sys/types.h>
 
 /* first chars of LOOKUP_MSG and REXMIT_MSG shall remain different */
 #define TOP "------------------------------------------------------------------------\r\n  SIK Radio\r\n------------------------------------------------------------------------\r\n"

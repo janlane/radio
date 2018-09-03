@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <utility>
 #include <vector>
+#include <arpa/inet.h>
 
 
 class audiogram {
@@ -27,7 +28,7 @@ public:
         return htonll(*(uint64_t *)packet.data());
     }
 
-    uint64_t set_session_id(uint64_t id) {
+    void set_session_id(uint64_t id) {
         *(uint64_t *)packet.data() = id;
     }
 
@@ -35,7 +36,7 @@ public:
         return ntohll(*(uint64_t *)(packet.data() + sizeof(uint64_t)));
     }
 
-    uint64_t set_packet_id(uint64_t id) {
+    void set_packet_id(uint64_t id) {
         *(uint64_t *)(packet.data() + sizeof(uint64_t)) = id;
     }
 
@@ -63,7 +64,7 @@ public:
         return fresh;
     }
 
-    bool set_fresh(bool fresh) {
+    void set_fresh(bool fresh) {
         this->fresh = fresh;
     }
 

@@ -5,6 +5,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 class receiver {
 public:
@@ -77,7 +78,7 @@ public:
                 err = 1;
             }
         // }
-        fcntl(sock, F_SETFL, O_NONBLOCK); // TODO del?
+        fcntl(sock, F_SETFL, O_NONBLOCK);
         return err;
     }
 

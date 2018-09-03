@@ -125,8 +125,6 @@ private:
                 if (std::cin.fail())
                     return;
 
-                // TODO temp
-                if (a.get_packet_id() % 1000000 != 0 && (a.get_packet_id() + psize) % 1000000 != 0)
                 send_audiogram(a);
 
                 data_q.push_back(std::move(a));
@@ -174,7 +172,7 @@ private:
                 if (buffer[0] == LOOKUP_MSG[0]) {
                     if (!parse_lookup(buffer, (size_t)rcv_len)) {
                         replies_mut.lock();
-                        replies_q.push(rcv_addr); // TODO zdecydować czy od razu send?
+                        replies_q.push(rcv_addr);
                         std::cerr << "reply pushed with " << inet_ntoa(rcv_addr.sin_addr) << "\n";
                         replies_mut.unlock();
                     }
